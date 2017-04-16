@@ -3,18 +3,18 @@ import ldap.modlist
 import inspect
 from IPython import embed
 from ldaphelper import ldaphelper
-ldap_server="localhost"
+ldap_server="172.32.0.3"
 username = "admin"
 password= "admin"
 # the following is the user_dn format provided by the ldap server
 base_dn = "dc=gkdb,dc=org"
-user_dn = "cn="+username+","+base_dn
+admin_dn = "cn="+username+","+base_dn
 # adjust this to your base dn for searching
 l = ldap.open(ldap_server)
 search_filter = "cn="+username
 try:
     #if authentication successful, get the full user data
-    l.bind_s(user_dn,password)
+    l.bind_s(admin_dn,password)
     result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
     # return all user data results
     #l.unbind_s()
@@ -25,13 +25,15 @@ except ldap.LDAPError:
 
 class posixGroup:
     objectclass = ['top', 'posixGroup']
-    def __init__(self, name, gid, description=None, memberUid=None, userPassword=None):
+    def __init__(self, name, gid, description=None, memberUid=None, userPassword=None, autopush=True):
         self.cn = name
         self.gidNumber = gid
 
         self.description = description
         self.memberUid = memberUid
         self.userPassword = userPassword
+        if autopush:
+            self.to_server()
 
     def to_addModlist(self):
         attrs = inspect.getmembers(self, lambda a:not(inspect.isroutine(a)))
@@ -50,18 +52,23 @@ class posixGroup:
 
 class posixUser:
     objectclass = ['top', 'inetOrgPerson', 'posixAccount']
-    def __init__(self, first_name, last_name, primary_gid, description=None, gecos=None, loginShell=None, userPassword=None):
+    def __init__(self, first_name, last_name, primary_gid, description=None, gecos=None, loginShell=None, userPassword=None, autopush=True):
         self.cn = ' '.join([first_name, last_name])
         self.sn = last_name
         self.gn = first_name
         self.gidNumber = primary_gid
         self.uid = ''.join([first_name[0].lower(), last_name.lower()])
         self.homeDirectory = ''.join(['/home/users', self.uid])
-        self.uidNumber = 1000
+        if get_highest_uid() == -1:
+            self.uidNumber = 1000
+        else:
+            self.uidNumber = get_highest_uid() + 1
         self.description = description
         self.gecos = gecos
         self.loginShell = loginShell
         self.userPassword = userPassword
+        if autopush:
+            self.to_server()
 
     def to_addModlist(self):
         attrs = inspect.getmembers(self, lambda a:not(inspect.isroutine(a)))
@@ -77,6 +84,28 @@ class posixUser:
 
     def to_server(self, server_dn=base_dn):
         l.add_s('cn=' + self.cn + ',' + server_dn, self.to_addModlist())
-group = posixGroup('users', 100)
-user = posixUser('Mister', 'Testuser', group.gidNumber)
+
+def get_all_users():
+    search_filter = '(&(objectClass=posixAccount)(uid=*))'
+    result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
+    return ldaphelper.get_search_results(result)
+
+def get_highest_uid():
+    highest_uid = -1
+    for user in get_all_users():
+        uid = int(user.get_attributes()['uidNumber'][0])
+        if uid > highest_uid:
+            highest_uid = uid
+    return highest_uid
+
+    embed()
+
+posix_to_sql = {'sql_readonly': 'something'} 
+users = posixGroup('users', 100)
+sql_admin = posixGroup('sql_admin', 2000)
+sql_writer = posixGroup('sql_writer', 2001)
+sql_readonly = posixGroup('sql_readonly', 2002)
+user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber)
+user1 = posixUser('Trusted', 'User',  sql_writer.gidNumber)
+user2 = posixUser('Untrusted', 'User',  sql_readonly.gidNumber)
 embed()
