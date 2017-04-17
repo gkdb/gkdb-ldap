@@ -3,6 +3,40 @@ import ldap.modlist
 import inspect
 from IPython import embed
 from ldaphelper import ldaphelper
+PYSOLR_PATH = './gkdb'
+import sys
+if not PYSOLR_PATH in sys.path:
+    sys.path.append(PYSOLR_PATH)
+from gkdb.core.model import *
+
+db.execute_sql('SET ROLE developer') # Needed to create new roles
+def get_groups(uid):
+    return db.execute_sql("""
+      SELECT * FROM
+      pg_group
+      WHERE
+      %s = ANY (grolist)
+      ;""", (uid, ))
+
+def get_usergroups():
+    return db.execute_sql("""
+      SELECT usename, STRING_AGG(groname, ', ')
+      FROM pg_catalog.pg_user AS u
+      LEFT JOIN pg_catalog.pg_group AS g ON u.usesysid = ANY (g.grolist)
+      GROUP BY usename
+      """)
+
+def create_user(username, password=None, groups=[]):
+    groups = ', '.join(groups)
+    print(groups)
+    if password is None:
+        password = "something.."
+    print(username, password, groups)
+    db.execute_sql("CREATE USER " + username +
+                   " PASSWORD %s" +
+                   " IN ROLE " + groups,
+                   (password, ))
+
 ldap_server="172.32.0.3"
 username = "admin"
 password= "admin"
@@ -98,14 +132,15 @@ def get_highest_uid():
             highest_uid = uid
     return highest_uid
 
-    embed()
-
 posix_to_sql = {'sql_readonly': 'something'} 
-users = posixGroup('users', 100)
-sql_admin = posixGroup('sql_admin', 2000)
-sql_writer = posixGroup('sql_writer', 2001)
-sql_readonly = posixGroup('sql_readonly', 2002)
-user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber)
-user1 = posixUser('Trusted', 'User',  sql_writer.gidNumber)
-user2 = posixUser('Untrusted', 'User',  sql_readonly.gidNumber)
+try:
+    users = posixGroup('users', 100)
+    sql_admin = posixGroup('sql_admin', 2000)
+    sql_writer = posixGroup('sql_writer', 2001)
+    sql_readonly = posixGroup('sql_readonly', 2002)
+    user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber)
+    user1 = posixUser('Trusted', 'User',  sql_writer.gidNumber)
+    user2 = posixUser('Untrusted', 'User',  sql_readonly.gidNumber)
+except ldap.ALREADY_EXISTS:
+    pass
 embed()

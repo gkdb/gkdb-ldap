@@ -1,0 +1,3 @@
+[submodule "gkdb"]
+	path = gkdb
+	url = https://github.com/gkdb/gkdb.git
