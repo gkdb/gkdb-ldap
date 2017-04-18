@@ -40,7 +40,7 @@ def create_user(username, password=None, groups=[]):
                    " IN ROLE " + groups,
                    (password, ))
 
-ldap_server="172.32.0.3"
+ldap_server="gkdb.org"
 username = "admin"
 password= "admin"
 # the following is the user_dn format provided by the ldap server
