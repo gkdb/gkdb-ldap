@@ -90,11 +90,11 @@ class posixGroup:
 class posixUser:
     objectclass = ['top', 'inetOrgPerson', 'posixAccount']
     def __init__(self, first_name, last_name, primary_gid, description=None, gecos=None, loginShell=None, userPassword=None, autopush=True):
-        self.cn = ' '.join([first_name, last_name])
         self.sn = last_name
         self.gn = first_name
         self.gidNumber = primary_gid
         self.uid = ''.join([first_name[0].lower()] + last_name.lower().split())
+        self.cn = self.uid
         self.homeDirectory = ''.join(['/home/users/', self.uid])
         if get_highest_uid() == -1:
             self.uidNumber = 1000
