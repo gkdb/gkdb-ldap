@@ -4,9 +4,13 @@ import inspect
 from IPython import embed
 from ldaphelper import ldaphelper
 import sys
-for path in ['./gkdb', './ssha']:
+import os
+root = os.path.dirname(os.path.realpath(__file__))
+for subpath in ['gkdb', 'ssha']:
+    path = os.path.join(root, subpath)
     if not path in sys.path:
         sys.path.append(path)
+print(sys.path)
 from ssha.openldap_passwd import *
 from gkdb.core.model import *
 from base64 import b64encode
