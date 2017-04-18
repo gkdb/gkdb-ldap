@@ -3,11 +3,14 @@ import ldap.modlist
 import inspect
 from IPython import embed
 from ldaphelper import ldaphelper
-PYSOLR_PATH = './gkdb'
 import sys
-if not PYSOLR_PATH in sys.path:
-    sys.path.append(PYSOLR_PATH)
+for path in ['./gkdb', './ssha']:
+    if not path in sys.path:
+        sys.path.append(path)
+from ssha.openldap_passwd import *
 from gkdb.core.model import *
+from base64 import b64encode
+from os import urandom
 
 db.execute_sql('SET ROLE developer') # Needed to create new roles
 def get_groups(uid):
@@ -91,8 +94,8 @@ class posixUser:
         self.sn = last_name
         self.gn = first_name
         self.gidNumber = primary_gid
-        self.uid = ''.join([first_name[0].lower(), last_name.lower()])
-        self.homeDirectory = ''.join(['/home/users', self.uid])
+        self.uid = ''.join([first_name[0].lower()] + last_name.lower().split())
+        self.homeDirectory = ''.join(['/home/users/', self.uid])
         if get_highest_uid() == -1:
             self.uidNumber = 1000
         else:
@@ -100,6 +103,11 @@ class posixUser:
         self.description = description
         self.gecos = gecos
         self.loginShell = loginShell
+        if userPassword is None:
+            random_bytes = urandom(64)
+            password = b64encode(random_bytes).decode('utf-8')
+            print(password)
+            userPassword = make_secret(b64encode(random_bytes).decode('utf-8'))
         self.userPassword = userPassword
         if autopush:
             self.to_server()
@@ -132,7 +140,6 @@ def get_highest_uid():
             highest_uid = uid
     return highest_uid
 
-posix_to_sql = {'sql_readonly': 'something'} 
 try:
     users = posixGroup('users', 100)
     sql_admin = posixGroup('sql_admin', 2000)
