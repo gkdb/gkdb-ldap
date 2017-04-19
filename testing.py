@@ -12,34 +12,41 @@ for subpath in ['gkdb', 'ssha']:
         sys.path.append(path)
 print(sys.path)
 from ssha.openldap_passwd import *
-from gkdb.core.model import *
 from base64 import b64encode
 from os import urandom
+import psycopg2 as psy
 
-db.execute_sql('SET ROLE developer') # Needed to create new roles
+conn = psy.connect(dbname='gkdb', host='gkdb.org')
+cur = conn.cursor()
+cur.execute('SET ROLE developer') # Needed to create new roles
 def get_groups(uid):
-    return db.execute_sql("""
+    cur = conn.cursor()
+    cur.execute("""
       SELECT * FROM
       pg_group
       WHERE
       %s = ANY (grolist)
       ;""", (uid, ))
+    return cur
 
 def get_usergroups():
-    return db.execute_sql("""
-      SELECT usename, STRING_AGG(groname, ', ')
+    cur = conn.cursor()
+    cur.execute("""
+      SELECT usename, usesysid, STRING_AGG(groname, ', ')
       FROM pg_catalog.pg_user AS u
       LEFT JOIN pg_catalog.pg_group AS g ON u.usesysid = ANY (g.grolist)
-      GROUP BY usename
+      GROUP BY usename, usesysid
       """)
+    return cur
 
 def create_user(username, password=None, groups=[]):
+    cur = conn.cursor()
     groups = ', '.join(groups)
     print(groups)
     if password is None:
         password = "something.."
     print(username, password, groups)
-    db.execute_sql("CREATE USER " + username +
+    cur.execute("CREATE USER " + username +
                    " PASSWORD %s" +
                    " IN ROLE " + groups,
                    (password, ))
@@ -144,12 +151,16 @@ def get_highest_uid():
             highest_uid = uid
     return highest_uid
 
+posix_to_sql = {'sql_readonly': 'read_only',
+                'sql_write': 'write_to_sandbox',
+                'sql_admin': 'developer'
+                }
 try:
     users = posixGroup('users', 100)
     sql_admin = posixGroup('sql_admin', 2000)
     sql_writer = posixGroup('sql_writer', 2001)
     sql_readonly = posixGroup('sql_readonly', 2002)
-    user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber)
+    user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber, userPassword='test')
     user1 = posixUser('Trusted', 'User',  sql_writer.gidNumber)
     user2 = posixUser('Untrusted', 'User',  sql_readonly.gidNumber)
 except ldap.ALREADY_EXISTS:
