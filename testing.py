@@ -17,8 +17,6 @@ from os import urandom
 import psycopg2 as psy
 
 conn = psy.connect(dbname='gkdb', host='gkdb.org')
-cur = conn.cursor()
-cur.execute('SET ROLE developer') # Needed to create new roles
 def get_groups(uid):
     cur = conn.cursor()
     cur.execute("""
@@ -29,27 +27,28 @@ def get_groups(uid):
       ;""", (uid, ))
     return cur
 
-def get_usergroups():
+def get_sql_usergroups():
     cur = conn.cursor()
     cur.execute("""
-      SELECT usename, usesysid, STRING_AGG(groname, ', ')
+      SELECT usename, STRING_AGG(groname, ', ')
       FROM pg_catalog.pg_user AS u
       LEFT JOIN pg_catalog.pg_group AS g ON u.usesysid = ANY (g.grolist)
-      GROUP BY usename, usesysid
+      GROUP BY usename
       """)
     return cur
 
 def create_user(username, password=None, groups=[]):
     cur = conn.cursor()
+    cur.execute('SET ROLE developer') # Needed to create new roles
     groups = ', '.join(groups)
     print(groups)
     if password is None:
         password = "something.."
     print(username, password, groups)
     cur.execute("CREATE USER " + username +
-                   " PASSWORD %s" +
-                   " IN ROLE " + groups,
-                   (password, ))
+                   " IN ROLE " + groups
+                   )
+    conn.commit()
 
 ldap_server="gkdb.org"
 username = "admin"
@@ -143,6 +142,11 @@ def get_all_users():
     result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
     return ldaphelper.get_search_results(result)
 
+def get_all_groups():
+    search_filter = '(&(objectClass=posixGroup)(gidNumber=*))'
+    result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
+    return ldaphelper.get_search_results(result)
+
 def get_highest_uid():
     highest_uid = -1
     for user in get_all_users():
@@ -151,6 +155,19 @@ def get_highest_uid():
             highest_uid = uid
     return highest_uid
 
+def get_gid_name_map():
+    ress = get_all_groups()
+    attrs = [res.get_attributes() for res in ress]
+    return {attr['gidNumber'][0]: attr['cn'][0] for attr in attrs}
+
+def get_user_sqlgroup_map():
+    get_all_users()
+
+    attrs = [user.get_attributes() for user in get_all_users()]
+    gid_name_map = get_gid_name_map()
+    return {(attr['uid'][0], posix_to_sql[gid_name_map[attr['gidNumber'][0]]]) for attr in attrs}
+
+
 posix_to_sql = {'sql_readonly': 'read_only',
                 'sql_write': 'write_to_sandbox',
                 'sql_admin': 'developer'
@@ -158,11 +175,19 @@ posix_to_sql = {'sql_readonly': 'read_only',
 try:
     users = posixGroup('users', 100)
     sql_admin = posixGroup('sql_admin', 2000)
-    sql_writer = posixGroup('sql_writer', 2001)
+    sql_writer = posixGroup('sql_write', 2001)
     sql_readonly = posixGroup('sql_readonly', 2002)
     user0 = posixUser('Karel', 'van de Plassche', sql_admin.gidNumber, userPassword='test')
     user1 = posixUser('Trusted', 'User',  sql_writer.gidNumber)
     user2 = posixUser('Untrusted', 'User',  sql_readonly.gidNumber)
 except ldap.ALREADY_EXISTS:
     pass
+
+def sync_ldap_sql():
+    cur = get_sql_usergroups()
+    sql_users = {x for x in cur}
+    ldap_users = get_user_sqlgroup_map()
+    missing = ldap_users.difference(sql_users)
+    [create_user(miss[0], groups=[miss[1]]) for miss in missing]
+
 embed()
