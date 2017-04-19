@@ -26,8 +26,8 @@ def connect(server, username, password):
 
 base_dn = "dc=gkdb,dc=org"
 ldap_server="gkdb.org"
-username = "admin"
-password= "admin"
+username = os.environ['LDAP_ADMIN_USER']
+password = os.environ['LDAP_ADMIN_PASSWORD']
 db = connect(ldap_server, username, password)
 
 POSIX_TO_SQL = {'sql_readonly': 'read_only',
