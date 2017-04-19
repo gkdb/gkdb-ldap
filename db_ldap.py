@@ -1,73 +1,39 @@
 import ldap
-import ldap.modlist
 import inspect
-from IPython import embed
 from ldaphelper import ldaphelper
 import sys
 import os
 root = os.path.dirname(os.path.realpath(__file__))
-for subpath in ['gkdb', 'ssha']:
+for subpath in ['ssha']:
     path = os.path.join(root, subpath)
     if not path in sys.path:
         sys.path.append(path)
-print(sys.path)
+
 from ssha.openldap_passwd import *
 from base64 import b64encode
-from os import urandom
-import psycopg2 as psy
 
-conn = psy.connect(dbname='gkdb', host='gkdb.org')
-def get_groups(uid):
-    cur = conn.cursor()
-    cur.execute("""
-      SELECT * FROM
-      pg_group
-      WHERE
-      %s = ANY (grolist)
-      ;""", (uid, ))
-    return cur
+def connect(server, username, password):
+    # the following is the user_dn format provided by the ldap server
+    admin_dn = "cn="+username+","+base_dn
+    # adjust this to your base dn for searching
+    db = ldap.open(ldap_server)
+    try:
+        db.bind_s(admin_dn,password)
+    except ldap.LDAPError:
+        db.unbind_s()
+        raise Exception("authentication error")
+    return db
 
-def get_sql_usergroups():
-    cur = conn.cursor()
-    cur.execute("""
-      SELECT usename, STRING_AGG(groname, ', ')
-      FROM pg_catalog.pg_user AS u
-      LEFT JOIN pg_catalog.pg_group AS g ON u.usesysid = ANY (g.grolist)
-      GROUP BY usename
-      """)
-    return cur
-
-def create_user(username, password=None, groups=[]):
-    cur = conn.cursor()
-    cur.execute('SET ROLE developer') # Needed to create new roles
-    groups = ', '.join(groups)
-    print(groups)
-    if password is None:
-        password = "something.."
-    print(username, password, groups)
-    cur.execute("CREATE USER " + username +
-                   " IN ROLE " + groups
-                   )
-    conn.commit()
-
+base_dn = "dc=gkdb,dc=org"
 ldap_server="gkdb.org"
 username = "admin"
 password= "admin"
-# the following is the user_dn format provided by the ldap server
-base_dn = "dc=gkdb,dc=org"
-admin_dn = "cn="+username+","+base_dn
-# adjust this to your base dn for searching
-l = ldap.open(ldap_server)
-search_filter = "cn="+username
-try:
-    #if authentication successful, get the full user data
-    l.bind_s(admin_dn,password)
-    # return all user data results
-    #l.unbind_s()
-except ldap.LDAPError:
-    l.unbind_s()
-    print "authentication error"
+db = connect(ldap_server, username, password)
 
+POSIX_TO_SQL = {'sql_readonly': 'read_only',
+                'sql_write': 'write_to_sandbox',
+                'sql_admin': 'developer'
+                }
 class LdapGroup:
     def to_addModlist(self):
         attrs = inspect.getmembers(self, lambda a:not(inspect.isroutine(a)))
@@ -82,7 +48,7 @@ class LdapGroup:
         return modlist
 
     def to_server(self, server_dn=base_dn):
-        l.add_s('cn=' + self.cn + ',' + server_dn, self.to_addModlist())
+        db.add_s('cn=' + self.cn + ',' + server_dn, self.to_addModlist())
 
 class PosixGroup(LdapGroup):
     objectclass = ['top', 'posixGroup']
@@ -114,22 +80,22 @@ class PosixAccount(LdapGroup):
         self.gecos = gecos
         self.loginShell = loginShell
         if userPassword is None:
-            random_bytes = urandom(64)
+            random_bytes = os.urandom(64)
             password = b64encode(random_bytes).decode('utf-8')
-            print(password)
             userPassword = make_secret(b64encode(random_bytes).decode('utf-8'))
         self.userPassword = userPassword
         if autopush:
             self.to_server()
+        print('created user: ', self.uid, ' with password: ' + password)
 
 def get_all_users():
     search_filter = '(&(objectClass=posixAccount)(uid=*))'
-    result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
+    result = db.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
     return ldaphelper.get_search_results(result)
 
 def get_all_groups():
     search_filter = '(&(objectClass=posixGroup)(gidNumber=*))'
-    result = l.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
+    result = db.search_s(base_dn,ldap.SCOPE_SUBTREE,search_filter)
     return ldaphelper.get_search_results(result)
 
 def get_highest_uid():
@@ -148,29 +114,4 @@ def get_gid_name_map():
 def get_user_sqlgroup_map():
     attrs = [user.get_attributes() for user in get_all_users()]
     gid_name_map = get_gid_name_map()
-    return {(attr['uid'][0], posix_to_sql[gid_name_map[attr['gidNumber'][0]]]) for attr in attrs}
-
-
-posix_to_sql = {'sql_readonly': 'read_only',
-                'sql_write': 'write_to_sandbox',
-                'sql_admin': 'developer'
-                }
-try:
-    users = PosixGroup('users', 100)
-    sql_admin = PosixGroup('sql_admin', 2000)
-    sql_writer = PosixGroup('sql_write', 2001)
-    sql_readonly = PosixGroup('sql_readonly', 2002)
-    user0 = PosixAccount('Karel', 'van de Plassche', sql_admin.gidNumber, userPassword='test')
-    user1 = PosixAccount('Trusted', 'User',  sql_writer.gidNumber)
-    user2 = PosixAccount('Untrusted', 'User',  sql_readonly.gidNumber)
-except ldap.ALREADY_EXISTS:
-    pass
-
-def sync_ldap_sql():
-    cur = get_sql_usergroups()
-    sql_users = {x for x in cur}
-    ldap_users = get_user_sqlgroup_map()
-    missing = ldap_users.difference(sql_users)
-    [create_user(miss[0], groups=[miss[1]]) for miss in missing]
-
-embed()
+    return {(attr['uid'][0], POSIX_TO_SQL[gid_name_map[attr['gidNumber'][0]]]) for attr in attrs}
